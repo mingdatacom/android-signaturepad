@@ -23,4 +23,5 @@ android {
 dependencies {
     compile project(":signature-pad")
     compile 'com.android.support:appcompat-v7:23.2.0'
+    compile 'commons-codec:commons-codec:1.10'
 }

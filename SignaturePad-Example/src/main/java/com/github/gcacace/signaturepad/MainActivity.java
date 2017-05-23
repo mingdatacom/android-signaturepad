@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Environment;
 import android.support.annotation.NonNull;
@@ -19,11 +20,23 @@ import android.widget.Toast;
 
 import com.github.gcacace.signaturepad.views.SignaturePad;
 
+import org.apache.commons.codec.binary.Base64;
+
+import java.io.BufferedReader;
+import java.io.DataOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.ProtocolException;
+import java.net.URL;
+import java.net.URLConnection;
 
 import it.gcacace.signaturepad.R;
 
@@ -126,14 +139,155 @@ public class MainActivity extends Activity {
     public boolean addJpgSignatureToGallery(Bitmap signature) {
         boolean result = false;
         try {
-            File photo = new File(getAlbumStorageDir("SignaturePad"), String.format("Signature_%d.jpg", System.currentTimeMillis()));
+            final File photo = new File(getAlbumStorageDir("SignaturePad"), String.format("Signature_%d.jpg", System.currentTimeMillis()));
             saveBitmapToJPG(signature, photo);
             scanMediaFile(photo);
+            new AsyncTask<Void, Void, Void>() {
+                @Override
+                protected Void doInBackground(Void... params) {
+                    uploadFile(photo);
+                    return null;
+                }
+            }.execute();
             result = true;
         } catch (IOException e) {
             e.printStackTrace();
         }
         return result;
+    }
+
+    public int uploadFile(File sourceFileUri) {
+        String upLoadServerUri = "http://192.168.111.3:8080/xxx/fileupload/api";
+        HttpURLConnection conn = null;
+        DataOutputStream dos = null;
+        String lineEnd = "\r\n";
+        String twoHyphens = "--";
+        String boundary = "*****";
+        String username = "xxx";
+        String password = "xxx";
+        int bytesRead, bytesAvailable, bufferSize, serverResponseCode = 0;
+        byte[] buffer;
+        int maxBufferSize = 1 * 1024 * 1024;
+        File sourceFile = sourceFileUri;
+
+        if (!sourceFile.isFile()) {
+            Log.e("uploadFile", "Source File not exist :" + sourceFile);
+            return 0;
+        }
+        else
+        {
+            try {
+                // open a URL connection to the Servlet
+                FileInputStream fileInputStream = new FileInputStream(sourceFile);
+                URL url = new URL(upLoadServerUri);
+
+                // Open a HTTP  connection to  the URL
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setDoInput(true); // Allow Inputs
+                conn.setDoOutput(true); // Allow Outputs
+                conn.setUseCaches(false); // Don't use a Cached Copy
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Connection", "Keep-Alive");
+                conn.setRequestProperty("ENCTYPE", "multipart/form-data");
+                conn.setRequestProperty("Content-Type", "multipart/form-data;boundary=" + boundary);
+                conn.setRequestProperty("name", sourceFile.getName());
+                String userpass = username + ":" + password;
+                String basicAuth = "Basic " + new String(new Base64().encode(userpass.getBytes()));
+                conn.setRequestProperty ("Authorization", basicAuth);
+                dos = new DataOutputStream(conn.getOutputStream());
+
+                dos.writeBytes(twoHyphens + boundary + lineEnd);
+                dos.writeBytes("Content-Disposition: form-data;  name=\"" + "name" + "\"" + lineEnd);
+                dos.writeBytes("Content-Type: text/plain; charset=" + "UTF-8" + lineEnd);
+                dos.writeBytes(lineEnd);
+                //dos.writeBytes("datacom.jpg" + lineEnd);
+                dos.writeBytes("datacom.jpg");
+                dos.writeBytes(lineEnd);
+
+                dos.writeBytes(twoHyphens + boundary + lineEnd);
+                dos.writeBytes("Content-Disposition: form-data; name=\"" + "file" + "\"; filename=\""
+                        + sourceFile.getName() + "\"" + lineEnd);
+                dos.writeBytes(
+                        "Content-Type: "
+                                + URLConnection.guessContentTypeFromName(sourceFile.getName())
+                        + lineEnd);
+                dos.writeBytes("Content-Transfer-Encoding: binary" + lineEnd);
+                dos.writeBytes(lineEnd);
+
+                // create a buffer of  maximum size
+                bytesAvailable = fileInputStream.available();
+
+                bufferSize = Math.min(bytesAvailable, maxBufferSize);
+                buffer = new byte[bufferSize];
+
+                // read file and write it into form...
+                bytesRead = fileInputStream.read(buffer, 0, bufferSize);
+
+                while (bytesRead > 0) {
+
+                    dos.write(buffer, 0, bufferSize);
+                    bytesAvailable = fileInputStream.available();
+                    bufferSize = Math.min(bytesAvailable, maxBufferSize);
+                    bytesRead = fileInputStream.read(buffer, 0, bufferSize);
+
+                }
+
+                // send multipart form data necesssary after file data...
+                dos.writeBytes(lineEnd);
+                dos.writeBytes(twoHyphens + boundary + twoHyphens + lineEnd);
+
+                // Responses from the server (code and message)
+                serverResponseCode = conn.getResponseCode();
+                String serverResponseMessage = conn.getResponseMessage();
+                BufferedReader br = new BufferedReader(new InputStreamReader((conn.getInputStream())));
+                StringBuilder sb = new StringBuilder();
+                String output;
+                while ((output = br.readLine()) != null) {
+                    sb.append(output);
+                }
+                Log.d("uploadFile", "HTTP Response is : "
+                        + serverResponseMessage + ": " + serverResponseCode + ":" + sb.toString());
+
+                if (serverResponseCode == 200) {
+                    String msg = "File Upload Completed.\n\n See uploaded file here : \n\n"
+                            + upLoadServerUri;
+                    Log.d("uploadFile", msg);
+                    runOnUiThread(new Runnable() {
+                        public void run() {
+                            Toast.makeText(MainActivity.this, "File Upload Complete.",
+                                    Toast.LENGTH_SHORT).show();
+                        }
+                    });
+                }
+
+                //close the streams //
+                fileInputStream.close();
+                dos.flush();
+                dos.close();
+            } catch (FileNotFoundException fnfe) {
+                        fnfe.printStackTrace();
+            } catch (MalformedURLException ex) {
+                ex.printStackTrace();
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        Toast.makeText(MainActivity.this, "MalformedURLException",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
+
+                Log.e("Upload file to server", "error: " + ex.getMessage(), ex);
+            } catch (Exception e) {
+                e.printStackTrace();
+                runOnUiThread(new Runnable() {
+                    public void run() {
+                        Toast.makeText(MainActivity.this, "Got Exception : see logcat ",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                });
+                Log.e("Upload file Exception", "Exception : " + e.getMessage());
+            }
+            return serverResponseCode;
+        } // End else block
     }
 
     private void scanMediaFile(File photo) {
